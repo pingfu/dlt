@@ -2,12 +2,34 @@
 using Dlt.Trackers;
 using Spectre.Console;
 
-if (args.Length != 1)
+static int Usage()
 {
-    AnsiConsole.MarkupLine("usage: dlt \"magnet:?xt=urn:btih:...&dn=...&tr=...\"");
-    AnsiConsole.MarkupLine("       dlt file.torrent");
-    AnsiConsole.MarkupLine("       dlt https://host/path/file.torrent");
+    AnsiConsole.MarkupLine("usage: dlt <magnet-uri | file.torrent | https://host/file.torrent> [[--out <dir>]] [[--select]] [[--seed]]");
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine("  probes every tracker, then downloads through the one reporting the most seeds");
+    AnsiConsole.MarkupLine("  [cyan]--out <dir>[/]  save into this directory, created if missing (default: current directory)");
+    AnsiConsole.MarkupLine("  [cyan]--select[/]     ask which tracker to use instead of picking automatically");
+    AnsiConsole.MarkupLine("  [cyan]--seed[/]       allow uploads, accept incoming peers, and keep seeding after the download completes");
+    AnsiConsole.WriteLine();
     AnsiConsole.MarkupLine("[grey]quote a magnet URI so the shell does not split it on '&'[/]");
+    return 2;
+}
+
+var cli = CliArgs.Parse(args);
+if (cli.Help || cli.Input is null) return Usage();
+string input = cli.Input;
+bool select = cli.Select, seed = cli.Seed;
+
+var outDir = Path.GetFullPath(cli.OutDir ?? Environment.CurrentDirectory);
+if (File.Exists(outDir))
+{
+    AnsiConsole.MarkupLine($"[red]error:[/] --out is a file, not a directory: {Markup.Escape(outDir)}");
+    return 2;
+}
+try { Directory.CreateDirectory(outDir); }
+catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+{
+    AnsiConsole.MarkupLine($"[red]error:[/] cannot create --out directory {Markup.Escape(outDir)}: {Markup.Escape(ex.Message)}");
     return 2;
 }
 
@@ -32,7 +54,6 @@ Console.CancelKeyPress += (_, e) =>
 MagnetUri magnet;
 try
 {
-    var input = args[0].Trim().Trim('"', '\'');
     magnet = File.Exists(input) || TorrentInput.IsHttpUrl(input)
         ? await TorrentInput.LoadAsync(input, cts.Token)
         : MagnetParser.Parse(input);
@@ -69,15 +90,24 @@ await Render.ProbeLiveAsync(probes, checker, magnet.TrackerInfoHash, cts.Token);
 AnsiConsole.WriteLine();
 Render.Summary(probes, cts.IsCancellationRequested);
 
-var found = probes.Where(p => p.Outcome == ProbeOutcome.Found).ToList();
-if (found.Count == 0 || cts.IsCancellationRequested) return 1;
-
-// Offer a download only on a real terminal; when piped, the probe report is the whole job.
-if (!AnsiConsole.Profile.Capabilities.Interactive || Console.IsOutputRedirected || Console.IsInputRedirected) return 0;
+// Default: the tracker reporting the most seeds (then most leechers, then table order). --select asks instead.
+var found = probes.Count(p => p.Outcome == ProbeOutcome.Found);
+var best = TrackerChoice.Best(probes);
+if (best is null) return 1;
 
 TrackerProbe? chosen;
-try { chosen = await Render.ChooseTrackerAsync(probes, found[0], cts.Token); }
-catch (OperationCanceledException) { return 0; }
-if (chosen is null) return 0;
+var interactive = AnsiConsole.Profile.Capabilities.Interactive && !Console.IsOutputRedirected && !Console.IsInputRedirected;
+if (select && interactive)
+{
+    chosen = await Render.ChooseTrackerAsync(probes, best, cts.Token);
+    if (chosen is null) return 0;
+}
+else
+{
+    if (select) AnsiConsole.MarkupLine("  [yellow]--select needs a terminal; picking automatically[/]");
+    chosen = best;
+    AnsiConsole.MarkupLine($"  using tracker [grey]#[/][cyan]{best.Index}[/]  [grey]({TrackerChoice.Reason(best, found)})[/]");
+    AnsiConsole.WriteLine();
+}
 
-return await Download.RunAsync(magnet, chosen.Url, Environment.CurrentDirectory, cts.Token) ? 0 : 1;
+return await Download.RunAsync(magnet, chosen.Url, outDir, seed, cts.Token) ? 0 : 1;

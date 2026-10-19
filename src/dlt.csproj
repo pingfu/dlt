@@ -16,6 +16,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="dlt.tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="MonoTorrent" Version="3.0.2" />
     <PackageReference Include="Spectre.Console" Version="0.57.2" />
   </ItemGroup>

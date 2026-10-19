@@ -29,6 +29,12 @@ internal static class TorrentInput
             data = await File.ReadAllBytesAsync(input, ct);
         }
 
+        return FromBytes(data, input);
+    }
+
+    /// <summary>Parses torrent file bytes. <paramref name="origin"/> is only recorded as where they came from.</summary>
+    public static MagnetUri FromBytes(ReadOnlySpan<byte> data, string origin)
+    {
         Torrent torrent;
         try { torrent = Torrent.Load(data); }
         catch (Exception ex) { throw new MagnetFormatException($"not a valid torrent file: {ex.Message}"); }
@@ -46,8 +52,8 @@ internal static class TorrentInput
         return new MagnetUri
         {
             Kind = "torrent",
-            Original = input,
-            Decoded = input,
+            Original = origin,
+            Decoded = origin,
             DisplayName = torrent.Name,
             InfoHashV1 = torrent.InfoHashes.V1?.AsMemory().ToArray(),
             InfoHashV2 = torrent.InfoHashes.V2?.AsMemory().ToArray(),

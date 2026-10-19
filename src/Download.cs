@@ -1,3 +1,4 @@
+using System.Net;
 using MonoTorrent;
 using MonoTorrent.Client;
 using Spectre.Console;
@@ -8,7 +9,8 @@ namespace Dlt;
 /// <summary>Downloads the torrent behind a magnet with MonoTorrent, discovering peers only through the one chosen tracker.</summary>
 internal static class Download
 {
-    public static async Task<bool> RunAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, CancellationToken ct)
+    /// <param name="seed">Lift the upload restriction, accept incoming peers, and keep running as a seed once complete.</param>
+    public static async Task<bool> RunAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, bool seed, CancellationToken ct)
     {
         var link = new MagnetLink(ToInfoHashes(magnet), magnet.DisplayName, [trackerUrl], magnet.WebSeeds, magnet.ExactLength);
 
@@ -17,21 +19,28 @@ internal static class Download
             CacheDirectory = Path.Combine(Path.GetTempPath(), "dlt", "cache"),
             DhtEndPoint = null,                       // no DHT: peers come from the chosen tracker only
             AllowLocalPeerDiscovery = false,
-            AllowPortForwarding = false,
-            ListenEndPoints = new(),                  // outgoing connections only; nothing to firewall
+            // Seeding needs peers to reach us: listen on an OS-assigned port and try to map it. Otherwise outgoing only.
+            AllowPortForwarding = seed,
+            ListenEndPoints = seed
+                ? new() { ["ipv4"] = new IPEndPoint(IPAddress.Any, 0), ["ipv6"] = new IPEndPoint(IPAddress.IPv6Any, 0) }
+                : new(),
             AutoSaveLoadFastResume = false,
             AutoSaveLoadMagnetLinkMetadata = false,
             AutoSaveLoadDhtCache = false,
         }.ToSettings();
 
-        var torrentSettings = new TorrentSettingsBuilder
+        var torrentBuilder = new TorrentSettingsBuilder
         {
             AllowDht = false,
             AllowPeerExchange = true,
             CreateContainingDirectory = true,
-            UploadSlots = 0,                          // seeding off: never unchoke a peer
-            MaximumUploadRate = 1,                    // belt and braces; 0 would mean unlimited
-        }.ToSettings();
+        };
+        if (!seed)
+        {
+            torrentBuilder.UploadSlots = 0;           // seeding off: never unchoke a peer
+            torrentBuilder.MaximumUploadRate = 1;     // belt and braces; 0 would mean unlimited
+        }
+        var torrentSettings = torrentBuilder.ToSettings();
 
         using var engine = new ClientEngine(engineSettings);
         var manager = await engine.AddAsync(link, saveDirectory, torrentSettings);
@@ -39,6 +48,7 @@ internal static class Download
 
         AnsiConsole.MarkupLine($"  [grey]tracker[/]  {Markup.Escape(trackerUrl)}");
         AnsiConsole.MarkupLine($"  [grey]save to[/]  {Markup.Escape(Path.GetFullPath(saveDirectory))}");
+        if (seed) AnsiConsole.MarkupLine("  [grey]mode[/]     seed: uploads unlimited, incoming peers accepted, stays running after completion");
         AnsiConsole.WriteLine();
 
         try
@@ -53,7 +63,7 @@ internal static class Download
         }
         finally
         {
-            if (manager.State != TorrentState.Stopped)
+            if (!seed && manager.State != TorrentState.Stopped)
                 await manager.StopAsync(TimeSpan.FromSeconds(5));
         }
 
@@ -72,6 +82,14 @@ internal static class Download
         AnsiConsole.MarkupLine($"  [green bold]complete[/]  {Markup.Escape(manager.Name)}  [grey]({Render.HumanSize(manager.Torrent!.Size)})[/]");
         foreach (var file in manager.Files)
             AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(file.FullPath)}[/]");
+
+        if (seed)
+        {
+            AnsiConsole.WriteLine();
+            await SeedForeverAsync(manager, ct);   // returns only on error; Ctrl+C terminates the process
+            await manager.StopAsync(TimeSpan.FromSeconds(5));
+            return false;
+        }
         return true;
     }
 
@@ -88,10 +106,11 @@ internal static class Download
         };
     }
 
+    private static bool Interactive => AnsiConsole.Profile.Capabilities.Interactive && !Console.IsOutputRedirected;
+
     private static async Task ShowProgressAsync(TorrentManager manager, MetadataPhase phase, CancellationToken ct)
     {
-        var interactive = AnsiConsole.Profile.Capabilities.Interactive && !Console.IsOutputRedirected;
-        if (!interactive)
+        if (!Interactive)
         {
             await RunPlainAsync(manager, phase, ct);
             return;
@@ -153,6 +172,44 @@ internal static class Download
         }
     }
 
+    /// <summary>Seed mode after completion: a live status line (or a periodic line when piped) until the process is killed or the engine errors.</summary>
+    private static async Task SeedForeverAsync(TorrentManager manager, CancellationToken ct)
+    {
+        var started = DateTime.UtcNow;
+        string Line()
+        {
+            var size = Math.Max(1, manager.Torrent!.Size);
+            var uploaded = manager.Monitor.DataBytesSent;
+            var ratio = (double)uploaded / size;
+            var up = DateTime.UtcNow - started;
+            return $"seeding  [green]{Render.HumanSize(manager.Monitor.UploadRate)}/s[/]  "
+                 + $"[grey]uploaded[/] {Render.HumanSize(uploaded)}  [grey]ratio[/] {ratio:0.00}  "
+                 + $"[grey]peers[/] {manager.OpenConnections} ([grey]sending to[/] {manager.UploadingTo})  "
+                 + $"[grey]up for[/] {up:h\\:mm\\:ss}  [grey]ctrl+c to stop[/]";
+        }
+
+        if (!Interactive)
+        {
+            while (manager.State != TorrentState.Error)
+            {
+                AnsiConsole.MarkupLine("  " + Line());
+                await Task.Delay(30_000, ct);
+            }
+            return;
+        }
+
+        await AnsiConsole.Status()
+            .Spinner(AnsiConsole.Profile.Capabilities.Unicode ? Spinner.Known.Dots : Spinner.Known.Line)
+            .StartAsync(Line(), async ctx =>
+            {
+                while (manager.State != TorrentState.Error)
+                {
+                    ctx.Status(Line());
+                    await Task.Delay(1000, ct);
+                }
+            });
+    }
+
     private static bool IsFinished(TorrentManager manager)
         => manager.Complete || manager.State is TorrentState.Error or TorrentState.Stopped or TorrentState.Stopping;
 
@@ -186,103 +243,5 @@ internal static class Download
     {
         public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
             => task.IsIndeterminate ? new Markup(phase.Describe()) : Text.Empty;
-    }
-
-    /// <summary>
-    /// Names the stage of the metadata fetch (announce, connect, ask peers for the info dict) from tracker and peer events.
-    /// The engine itself only exposes "no metadata yet", so the stage is reconstructed here.
-    /// </summary>
-    private sealed class MetadataPhase
-    {
-        private readonly TorrentManager _manager;
-        private readonly object _lock = new();
-        private bool _announced;
-        private bool _announceOk;
-        private string? _trackerError;
-        private int _trackerPeers;
-        private int _pexPeers;
-        private int _connectFailed;
-        private ConnectionFailureReason? _lastFailure;
-        private int _connected;
-        private int _withExtensions;
-
-        public MetadataPhase(TorrentManager manager)
-        {
-            _manager = manager;
-            manager.TrackerManager.AnnounceComplete += (_, e) =>
-            {
-                lock (_lock)
-                {
-                    _announced = true;
-                    _announceOk = e.Successful;
-                    _trackerError = e.Successful ? null : e.Tracker?.FailureMessage ?? "announce failed";
-                    _trackerPeers = e.Peers.Values.Sum(list => list.Count);
-                }
-            };
-            manager.PeersFound += (_, e) =>
-            {
-                lock (_lock) if (e is PeerExchangePeersAdded) _pexPeers += e.NewPeers;
-            };
-            manager.ConnectionAttemptFailed += (_, e) =>
-            {
-                lock (_lock) { _connectFailed++; _lastFailure = e.Reason; }
-            };
-            manager.PeerConnected += (_, e) =>
-            {
-                lock (_lock) { _connected++; if (e.Peer.SupportsLTMessages) _withExtensions++; }
-            };
-            manager.PeerDisconnected += (_, e) =>
-            {
-                lock (_lock)
-                {
-                    _connected = Math.Max(0, _connected - 1);
-                    if (e.Peer.SupportsLTMessages) _withExtensions = Math.Max(0, _withExtensions - 1);
-                }
-            };
-        }
-
-        public string Describe()
-        {
-            lock (_lock)
-            {
-                if (!_announced)
-                    return "[grey]announcing to tracker[/]";
-
-                if (!_announceOk)
-                    return $"[red]tracker: {Markup.Escape(_trackerError ?? "announce failed")}[/]  [grey]retrying in {Retry()}[/]";
-
-                var known = _manager.Peers.Available;
-                var open = _manager.OpenConnections;
-                var pool = _trackerPeers + (_pexPeers > 0 ? $" (+{_pexPeers} pex)" : string.Empty);
-
-                if (_trackerPeers == 0 && known == 0 && open == 0)
-                    return $"[yellow]tracker returned no peers[/]  [grey]next announce in {Retry()}[/]";
-
-                if (open == 0)
-                {
-                    var failed = _connectFailed > 0 ? $", {_connectFailed} failed ({Reason(_lastFailure)})" : string.Empty;
-                    return $"[grey]tracker gave {pool} peers · connecting{failed}[/]";
-                }
-
-                var capable = _withExtensions == open ? string.Empty : $", {_withExtensions} speak extensions";
-                return $"[grey]tracker gave {pool} peers · {open} connected{capable} · requesting info dict[/]";
-            }
-        }
-
-        private string Retry()
-        {
-            var tracker = _manager.TrackerManager.Tiers.FirstOrDefault()?.ActiveTracker;
-            if (tracker is null) return "?";
-            var wait = tracker.UpdateInterval - tracker.TimeSinceLastAnnounce;
-            return wait <= TimeSpan.Zero ? "a moment" : wait.TotalSeconds < 90 ? $"{wait.TotalSeconds:0}s" : $"{wait.TotalMinutes:0}m";
-        }
-
-        private static string Reason(ConnectionFailureReason? reason) => reason switch
-        {
-            ConnectionFailureReason.Unreachable => "unreachable",
-            ConnectionFailureReason.HandshakeFailed => "handshake failed",
-            ConnectionFailureReason.EncryptionNegiotiationFailed => "encryption failed",
-            _ => "unknown",
-        };
     }
 }
