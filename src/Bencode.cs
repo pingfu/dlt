@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Magstat;
+namespace Dlt;
 
 /// <summary>
 /// Minimal bencode decoder: integers become long, strings become byte[], lists become List&lt;object&gt;,

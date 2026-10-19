@@ -1,12 +1,12 @@
-﻿using Magstat;
-using Magstat.Trackers;
+﻿using Dlt;
+using Dlt.Trackers;
 using Spectre.Console;
 
 if (args.Length != 1)
 {
-    AnsiConsole.MarkupLine("usage: magstat \"magnet:?xt=urn:btih:...&dn=...&tr=...\"");
-    AnsiConsole.MarkupLine("       magstat file.torrent");
-    AnsiConsole.MarkupLine("       magstat https://host/path/file.torrent");
+    AnsiConsole.MarkupLine("usage: dlt \"magnet:?xt=urn:btih:...&dn=...&tr=...\"");
+    AnsiConsole.MarkupLine("       dlt file.torrent");
+    AnsiConsole.MarkupLine("       dlt https://host/path/file.torrent");
     AnsiConsole.MarkupLine("[grey]quote a magnet URI so the shell does not split it on '&'[/]");
     return 2;
 }
@@ -14,13 +14,19 @@ if (args.Length != 1)
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
 {
-    // Ctrl+C exits immediately: no draining probes, no graceful tracker goodbye. Spectre hides the cursor
-    // during live rendering, so put it back before leaving; 130 is the conventional SIGINT exit code.
+    // Ctrl+C exits immediately: no draining probes, no graceful tracker goodbye.
+    // Environment.Exit is not used here: it runs the orderly runtime shutdown on the console control thread, and
+    // that stalls while Spectre's live renderer is mid-write, which left Ctrl+C doing nothing during a download.
+    // So: restore the cursor Spectre hid with a raw write that takes no managed locks, then terminate outright.
     e.Cancel = true;
-    AnsiConsole.Cursor.Show();
-    Console.Out.WriteLine();
-    Console.Out.Flush();
-    Environment.Exit(130);
+    try
+    {
+        using var stdout = Console.OpenStandardOutput();
+        stdout.Write("\x1b[?25h\r\n"u8);
+        stdout.Flush();
+    }
+    catch { /* nothing sensible to do on the way out */ }
+    Terminate.Now(130); // 130 is the conventional SIGINT exit code
 };
 
 MagnetUri magnet;

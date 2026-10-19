@@ -1,7 +1,7 @@
 using System.Net;
 using MonoTorrent;
 
-namespace Magstat;
+namespace Dlt;
 
 /// <summary>Loads a .torrent file (local path or http(s) URL, held in memory only) and presents it as a MagnetUri so the rest of the tool treats both alike.</summary>
 internal static class TorrentInput

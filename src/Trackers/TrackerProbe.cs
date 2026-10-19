@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace Magstat.Trackers;
+namespace Dlt.Trackers;
 
 public enum ProbeStage { Queued, Resolving, Connecting, Scraping, Announcing, Done }
 

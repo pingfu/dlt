@@ -1,4 +1,4 @@
-namespace Magstat;
+namespace Dlt;
 
 public sealed class MagnetFormatException(string message) : Exception(message);
 

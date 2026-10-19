@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using Magstat.Trackers;
+using Dlt.Trackers;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace Magstat;
+namespace Dlt;
 
 internal static class Render
 {

@@ -3,7 +3,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
-namespace Magstat.Trackers;
+namespace Dlt.Trackers;
 
 /// <summary>WebTorrent (ws/wss) tracker probe: open the socket and send a JSON scrape for the info hash.</summary>
 internal static class WebSocketTracker

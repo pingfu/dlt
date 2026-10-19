@@ -3,7 +3,7 @@ using MonoTorrent.Client;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace Magstat;
+namespace Dlt;
 
 /// <summary>Downloads the torrent behind a magnet with MonoTorrent, discovering peers only through the one chosen tracker.</summary>
 internal static class Download
@@ -14,7 +14,7 @@ internal static class Download
 
         var engineSettings = new EngineSettingsBuilder
         {
-            CacheDirectory = Path.Combine(Path.GetTempPath(), "magstat", "cache"),
+            CacheDirectory = Path.Combine(Path.GetTempPath(), "dlt", "cache"),
             DhtEndPoint = null,                       // no DHT: peers come from the chosen tracker only
             AllowLocalPeerDiscovery = false,
             AllowPortForwarding = false,

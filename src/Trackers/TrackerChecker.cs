@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 
-namespace Magstat.Trackers;
+namespace Dlt.Trackers;
 
 /// <summary>Dispatches a probe to the right protocol and folds every failure mode into the probe's outcome.</summary>
 public sealed class TrackerChecker : IDisposable

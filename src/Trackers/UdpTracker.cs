@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
-namespace Magstat.Trackers;
+namespace Dlt.Trackers;
 
 /// <summary>UDP tracker protocol (BEP 15): connect handshake followed by a scrape for the single info hash.</summary>
 internal static class UdpTracker

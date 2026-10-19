@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text;
 
-namespace Magstat.Trackers;
+namespace Dlt.Trackers;
 
 /// <summary>
 /// HTTP(S) tracker probe. Prefers the scrape convention (BEP 48: last path segment "announce..." becomes "scrape...").
@@ -9,7 +9,7 @@ namespace Magstat.Trackers;
 /// </summary>
 internal static class HttpTracker
 {
-    public const string UserAgent = "magstat/1.0";
+    public const string UserAgent = "dlt/1.0";
 
     public static async Task ProbeAsync(HttpClient http, TrackerProbe p, byte[] infoHash, TimeSpan timeout, CancellationToken ct)
     {
