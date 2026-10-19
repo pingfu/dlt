@@ -21,6 +21,31 @@ public class TrackerCheckerTests
         Assert.False(p.Clock.IsRunning);
     }
 
+    [Theory]
+    [InlineData(System.Net.WebSockets.WebSocketError.ConnectionClosedPrematurely, "closed before answering")]
+    [InlineData(System.Net.WebSockets.WebSocketError.NotAWebSocket, "not a websocket endpoint")]
+    [InlineData(System.Net.WebSockets.WebSocketError.UnsupportedVersion, "websocket version not supported")]
+    [InlineData(System.Net.WebSockets.WebSocketError.HeaderError, "bad websocket handshake")]
+    [InlineData(System.Net.WebSockets.WebSocketError.Success, "websocket error")]
+    public void WebSocketErrorsAreShort(System.Net.WebSockets.WebSocketError code, string expected)
+        => Assert.Equal(expected, TrackerChecker.DescribeWebSocket(new System.Net.WebSockets.WebSocketException(code)));
+
+    [Fact]
+    public void WebSocketWrappingASocketErrorUsesTheSocketWording()
+    {
+        var inner = new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused);
+        var ex = new System.Net.WebSockets.WebSocketException(System.Net.WebSockets.WebSocketError.Faulted, inner);
+        Assert.Equal("connection refused", TrackerChecker.DescribeWebSocket(ex));
+    }
+
+    [Fact]
+    public void WebSocketWrappingAnHttpErrorUsesTheHttpWording()
+    {
+        var inner = new HttpRequestException("x", null, System.Net.HttpStatusCode.NotFound) { };
+        var ex = new System.Net.WebSockets.WebSocketException(System.Net.WebSockets.WebSocketError.Faulted, inner);
+        Assert.DoesNotContain("remote party", TrackerChecker.DescribeWebSocket(ex));
+    }
+
     [Fact]
     public async Task CancellationIsReportedAsCancelled()
     {

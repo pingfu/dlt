@@ -10,9 +10,17 @@
     <RollForward>Major</RollForward>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Version>1.0.0</Version>
-    <Description>Decode a magnet URI and probe its trackers.</Description>
+    <Description>Torrent downloader that exits when it's done: probe the trackers, fetch the file, leave.</Description>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dlt</ToolCommandName>
+  </PropertyGroup>
+
+  <!-- `dotnet publish -r <rid>` produces one self-contained executable with the runtime inside it. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained Condition="'$(SelfContained)' == ''">true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>

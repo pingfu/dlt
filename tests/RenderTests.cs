@@ -17,6 +17,14 @@ public class RenderTests
     public void HumanSize(long bytes, string expected)
         => Assert.Equal(expected, Render.HumanSize(bytes));
 
+    [Theory]
+    [InlineData(0.4, "under a second")]
+    [InlineData(19.6, "20s")]
+    [InlineData(75, "1m 15s")]
+    [InlineData(3661, "1h 01m")]
+    public void HumanDuration(double seconds, string expected)
+        => Assert.Equal(expected, Render.HumanDuration(TimeSpan.FromSeconds(seconds)));
+
     private static (TestConsole Console, List<TrackerProbe> Probes) Setup(params string[] lines)
     {
         var console = new TestConsole();

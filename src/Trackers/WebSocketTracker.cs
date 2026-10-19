@@ -26,8 +26,16 @@ internal static class WebSocketTracker
         var binaryHash = Encoding.Latin1.GetString(infoHash);
 
         p.Stage = ProbeStage.Scraping;
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new { action = "scrape", info_hash = binaryHash });
-        await ws.SendAsync(payload, WebSocketMessageType.Text, endOfMessage: true, cts.Token);
+        // Written by hand rather than serialised from an object: keeps the trimmer happy and needs no reflection.
+        var payload = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(payload))
+        {
+            json.WriteStartObject();
+            json.WriteString("action", "scrape");
+            json.WriteString("info_hash", binaryHash);
+            json.WriteEndObject();
+        }
+        await ws.SendAsync(payload.WrittenMemory, WebSocketMessageType.Text, endOfMessage: true, cts.Token);
 
         var buffer = new ArrayBufferWriter<byte>();
         var chunk = new byte[8192];

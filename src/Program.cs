@@ -48,6 +48,7 @@ Console.CancelKeyPress += (_, e) =>
         stdout.Flush();
     }
     catch { /* nothing sensible to do on the way out */ }
+    Download.RemoveCacheIfEmpty(Download.DefaultCacheDirectory); // a few empty folders; quick, and best effort
     Terminate.Now(130); // 130 is the conventional SIGINT exit code
 };
 
@@ -87,7 +88,6 @@ var probes = magnet.Trackers.Select((url, i) => new TrackerProbe(i + 1, url)).To
 using var checker = new TrackerChecker(TimeSpan.FromSeconds(5));
 
 await Render.ProbeLiveAsync(probes, checker, magnet.TrackerInfoHash, cts.Token);
-AnsiConsole.WriteLine();
 Render.Summary(probes, cts.IsCancellationRequested);
 
 // Default: the tracker reporting the most seeds (then most leechers, then table order). --select asks instead.

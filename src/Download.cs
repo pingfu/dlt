@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using MonoTorrent;
 using MonoTorrent.Client;
@@ -9,14 +10,96 @@ namespace Dlt;
 /// <summary>Downloads the torrent behind a magnet with MonoTorrent, discovering peers only through the one chosen tracker.</summary>
 internal static class Download
 {
+    /// <summary>Where MonoTorrent insists on having a scratch directory. Nothing is ever written into it; see <see cref="RemoveCacheIfEmpty"/>.</summary>
+    internal static readonly string DefaultCacheDirectory = Path.Combine(Path.GetTempPath(), "dlt");
+
     /// <param name="seed">Lift the upload restriction, accept incoming peers, and keep running as a seed once complete.</param>
     public static async Task<bool> RunAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, bool seed, CancellationToken ct)
     {
+        try { return await RunCoreAsync(magnet, trackerUrl, saveDirectory, seed, ct); }
+        finally { RemoveCacheIfEmpty(DefaultCacheDirectory); }
+    }
+
+    private static async Task<bool> RunCoreAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, bool seed, CancellationToken ct)
+    {
         var link = new MagnetLink(ToInfoHashes(magnet), magnet.DisplayName, [trackerUrl], magnet.WebSeeds, magnet.ExactLength);
 
-        var engineSettings = new EngineSettingsBuilder
+        using var engine = new ClientEngine(BuildEngineSettings(seed));
+        var manager = await engine.AddAsync(link, saveDirectory, BuildTorrentSettings(seed));
+        var phase = new MetadataPhase(manager);
+
+        AnsiConsole.MarkupLine($"  [grey]tracker[/]  {Markup.Escape(trackerUrl)}");
+        AnsiConsole.MarkupLine($"  [grey]save to[/]  {Markup.Escape(Path.GetFullPath(saveDirectory))}");
+        if (seed) AnsiConsole.MarkupLine("  [grey]mode[/]     seed: uploads unlimited, incoming peers accepted, stays running after completion");
+        AnsiConsole.WriteLine();
+
+        var clock = Stopwatch.StartNew();
+        try
         {
-            CacheDirectory = Path.Combine(Path.GetTempPath(), "dlt", "cache"),
+            await manager.StartAsync();
+            await ShowProgressAsync(manager, phase, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            AnsiConsole.MarkupLine("  [yellow]download interrupted[/]");
+        }
+        finally
+        {
+            clock.Stop();
+            if (!seed && manager.State != TorrentState.Stopped)
+                await manager.StopAsync(TimeSpan.FromSeconds(5));
+        }
+
+        if (manager.State == TorrentState.Error)
+        {
+            AnsiConsole.MarkupLine($"  [red]error:[/] {Markup.Escape(manager.Error?.Exception?.Message ?? manager.Error?.Reason.ToString() ?? "unknown")}");
+            return false;
+        }
+        if (!manager.Complete)
+        {
+            if (!ct.IsCancellationRequested) AnsiConsole.MarkupLine("  [red]download did not complete[/]");
+            return false;
+        }
+
+        var size = manager.Torrent!.Size;
+        var seconds = Math.Max(clock.Elapsed.TotalSeconds, 0.001);
+        AnsiConsole.MarkupLine($"  [green bold]complete[/]  {Markup.Escape(manager.Name)}  "
+            + $"[grey]({Render.HumanSize(size)} in {Render.HumanDuration(clock.Elapsed)}, {Render.HumanSize((long)(size / seconds))}/s)[/]");
+        foreach (var file in manager.Files)
+            AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(file.FullPath)}[/]");
+
+        if (seed)
+        {
+            AnsiConsole.WriteLine();
+            await SeedForeverAsync(manager, ct);   // returns only on error; Ctrl+C terminates the process
+            await manager.StopAsync(TimeSpan.FromSeconds(5));
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Removes the engine's scratch directory, but only if it holds no files. MonoTorrent creates the directory
+    /// (with empty fastresume and metadata subfolders) when the engine is built, even though every auto-save option
+    /// is off and nothing is ever written there. Deleting it on the way out keeps "nothing outside the download
+    /// directory" true. A tree with files in it is left alone: it is not ours to delete.
+    /// </summary>
+    internal static void RemoveCacheIfEmpty(string directory)
+    {
+        try
+        {
+            if (!Directory.Exists(directory)) return;
+            if (Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any()) return;
+            Directory.Delete(directory, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* best effort */ }
+    }
+
+    /// <summary>Engine settings. Every auto-save option is off, so the cache directory stays empty.</summary>
+    internal static EngineSettings BuildEngineSettings(bool seed, string? cacheDirectory = null)
+        => new EngineSettingsBuilder
+        {
+            CacheDirectory = cacheDirectory ?? DefaultCacheDirectory,
             DhtEndPoint = null,                       // no DHT: peers come from the chosen tracker only
             AllowLocalPeerDiscovery = false,
             // Seeding needs peers to reach us: listen on an OS-assigned port and try to map it. Otherwise outgoing only.
@@ -29,7 +112,9 @@ internal static class Download
             AutoSaveLoadDhtCache = false,
         }.ToSettings();
 
-        var torrentBuilder = new TorrentSettingsBuilder
+    internal static TorrentSettings BuildTorrentSettings(bool seed)
+    {
+        var builder = new TorrentSettingsBuilder
         {
             AllowDht = false,
             AllowPeerExchange = true,
@@ -37,60 +122,10 @@ internal static class Download
         };
         if (!seed)
         {
-            torrentBuilder.UploadSlots = 0;           // seeding off: never unchoke a peer
-            torrentBuilder.MaximumUploadRate = 1;     // belt and braces; 0 would mean unlimited
+            builder.UploadSlots = 0;           // seeding off: never unchoke a peer
+            builder.MaximumUploadRate = 1;     // belt and braces; 0 would mean unlimited
         }
-        var torrentSettings = torrentBuilder.ToSettings();
-
-        using var engine = new ClientEngine(engineSettings);
-        var manager = await engine.AddAsync(link, saveDirectory, torrentSettings);
-        var phase = new MetadataPhase(manager);
-
-        AnsiConsole.MarkupLine($"  [grey]tracker[/]  {Markup.Escape(trackerUrl)}");
-        AnsiConsole.MarkupLine($"  [grey]save to[/]  {Markup.Escape(Path.GetFullPath(saveDirectory))}");
-        if (seed) AnsiConsole.MarkupLine("  [grey]mode[/]     seed: uploads unlimited, incoming peers accepted, stays running after completion");
-        AnsiConsole.WriteLine();
-
-        try
-        {
-            await manager.StartAsync();
-            await ShowProgressAsync(manager, phase, ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("  [yellow]download interrupted[/]");
-        }
-        finally
-        {
-            if (!seed && manager.State != TorrentState.Stopped)
-                await manager.StopAsync(TimeSpan.FromSeconds(5));
-        }
-
-        AnsiConsole.WriteLine();
-        if (manager.State == TorrentState.Error)
-        {
-            AnsiConsole.MarkupLine($"  [red]error:[/] {Markup.Escape(manager.Error?.Exception?.Message ?? manager.Error?.Reason.ToString() ?? "unknown")}");
-            return false;
-        }
-        if (!manager.Complete)
-        {
-            if (!ct.IsCancellationRequested) AnsiConsole.MarkupLine("  [red]download did not complete[/]");
-            return false;
-        }
-
-        AnsiConsole.MarkupLine($"  [green bold]complete[/]  {Markup.Escape(manager.Name)}  [grey]({Render.HumanSize(manager.Torrent!.Size)})[/]");
-        foreach (var file in manager.Files)
-            AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(file.FullPath)}[/]");
-
-        if (seed)
-        {
-            AnsiConsole.WriteLine();
-            await SeedForeverAsync(manager, ct);   // returns only on error; Ctrl+C terminates the process
-            await manager.StopAsync(TimeSpan.FromSeconds(5));
-            return false;
-        }
-        return true;
+        return builder.ToSettings();
     }
 
     private static InfoHashes ToInfoHashes(MagnetUri magnet)
@@ -116,8 +151,9 @@ internal static class Download
             return;
         }
 
+        // Cleared when done; the completion line that follows carries the final numbers. See Render.ProbeLiveAsync.
         await AnsiConsole.Progress()
-            .AutoClear(false)
+            .AutoClear(true)
             .HideCompleted(false)
             .Columns(
                 new TaskDescriptionColumn(),

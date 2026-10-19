@@ -62,14 +62,14 @@ internal static class Render
 
         foreach (var warning in m.Warnings)
             AnsiConsole.MarkupLine($"  [yellow]{Glyph("⚠", "!")}[/] [yellow]{Markup.Escape(warning)}[/]");
-        if (m.Warnings.Count > 0) AnsiConsole.WriteLine();
+        AnsiConsole.WriteLine();
     }
 
     public static async Task ProbeLiveAsync(IReadOnlyList<TrackerProbe> probes, TrackerChecker checker, byte[] infoHash, CancellationToken ct)
     {
         // Fixed widths stop Spectre from wrapping the short columns when the terminal is narrow; the tracker
         // column takes about half of what is left and the detail column absorbs the remainder.
-        const int indexWidth = 3, statusWidth = 13, countWidth = 7, timeWidth = 6;
+        const int indexWidth = 3, statusWidth = 13, countWidth = 7, timeWidth = 8; // "10,123ms"
         const int fixedWidths = indexWidth + statusWidth + countWidth * 3 + timeWidth;
         const int chrome = 8 * 3 + 1; // 8 columns × (2 padding + 1 border) + closing border
         var remaining = Math.Max(30, AnsiConsole.Profile.Width - fixedWidths - chrome);
@@ -107,7 +107,7 @@ internal static class Render
                 table.UpdateCell(i, 3, Count(p.Seeders, "green"));
                 table.UpdateCell(i, 4, Count(p.Leechers, "yellow"));
                 table.UpdateCell(i, 5, Count(p.Completed, "grey"));
-                table.UpdateCell(i, 6, new Markup(p.Stage == ProbeStage.Queued ? string.Empty : $"[grey]{p.Clock.Elapsed.TotalSeconds:0.0}s[/]"));
+                table.UpdateCell(i, 6, new Markup(p.Stage == ProbeStage.Queued ? string.Empty : $"[grey]{p.Clock.ElapsedMilliseconds:N0}ms[/]"));
                 table.UpdateCell(i, 7, DetailCell(p));
             }
         }
@@ -125,8 +125,10 @@ internal static class Render
             return;
         }
 
+        // The live region clears itself when done and the finished table is written once, plainly. That keeps the
+        // spacing around it deterministic; a live region left in place pads with lines of its own.
         await AnsiConsole.Live(table)
-            .AutoClear(false)
+            .AutoClear(true)
             .Overflow(VerticalOverflow.Ellipsis)
             .StartAsync(async ctx =>
             {
@@ -136,9 +138,9 @@ internal static class Render
                     ctx.Refresh();
                     await Task.WhenAny(all, Task.Delay(spinner.Interval, CancellationToken.None));
                 }
-                Refresh();
-                ctx.Refresh();
             });
+        Refresh();
+        AnsiConsole.Write(table);
     }
 
     public static void Summary(IReadOnlyList<TrackerProbe> probes, bool cancelled)
@@ -154,6 +156,7 @@ internal static class Render
         var headline = found > 0
             ? $"[green bold]{found}[/] of {probes.Count} trackers know this torrent"
             : $"[red bold]none[/] of the {probes.Count} trackers know this torrent";
+        AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"  {headline}" + (parts.Count > 0 ? $"  [grey]·[/]  {string.Join("  [grey]·[/]  ", parts)}" : string.Empty));
         if (cancelled) AnsiConsole.MarkupLine("  [yellow]probing was interrupted; results above are partial[/]");
         AnsiConsole.WriteLine();
@@ -241,6 +244,14 @@ internal static class Render
         => value is null ? Text.Empty : new Markup(value > 0 ? $"[{colour}]{value:N0}[/]" : "[grey]0[/]");
 
     private static string Glyph(string unicode, string ascii) => Unicode ? unicode : ascii;
+
+    public static string HumanDuration(TimeSpan t) => t.TotalSeconds switch
+    {
+        < 1 => "under a second",
+        < 60 => $"{t.TotalSeconds:0}s",
+        < 3600 => $"{(int)t.TotalMinutes}m {t.Seconds:00}s",
+        _ => $"{(int)t.TotalHours}h {t.Minutes:00}m",
+    };
 
     public static string HumanSize(long bytes)
     {

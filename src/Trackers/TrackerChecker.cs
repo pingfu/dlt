@@ -76,7 +76,7 @@ public sealed class TrackerChecker : IDisposable
         }
         catch (WebSocketException ex)
         {
-            p.Finish(ProbeOutcome.Unreachable, ex.InnerException is HttpRequestException hre ? DescribeHttp(hre) : $"websocket: {ex.Message}");
+            p.Finish(ProbeOutcome.Unreachable, DescribeWebSocket(ex));
         }
         catch (Exception ex)
         {
@@ -119,6 +119,29 @@ public sealed class TrackerChecker : IDisposable
             HttpRequestError.SecureConnectionError => "tls handshake failed",
             HttpRequestError.Unknown => ex.Message,
             var other => $"{other}: {ex.Message}",
+        };
+    }
+
+    /// <summary>Short, table-friendly wording for websocket failures; the framework's messages run to a full sentence.</summary>
+    internal static string DescribeWebSocket(WebSocketException ex)
+    {
+        for (var inner = ex.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            switch (inner)
+            {
+                case HttpRequestException hre: return DescribeHttp(hre);
+                case SocketException se: return SocketErrors.Describe(se);
+                case System.Security.Authentication.AuthenticationException: return "tls handshake failed";
+            }
+        }
+        return ex.WebSocketErrorCode switch
+        {
+            WebSocketError.ConnectionClosedPrematurely => "closed before answering",
+            WebSocketError.NotAWebSocket => "not a websocket endpoint",
+            WebSocketError.UnsupportedProtocol or WebSocketError.UnsupportedVersion => "websocket version not supported",
+            WebSocketError.HeaderError => "bad websocket handshake",
+            WebSocketError.Faulted => "websocket faulted",
+            _ => "websocket error",
         };
     }
 
