@@ -20,6 +20,10 @@
     <SelfContained Condition="'$(SelfContained)' == ''">true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Partial mode trims only the framework; MonoTorrent, Mono.Nat and Spectre are kept whole. 74 MB -> 13 MB. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
   </PropertyGroup>
 
