@@ -15,6 +15,9 @@ static int Usage()
     return 2;
 }
 
+// Windows consoles default to a legacy code page, which makes Spectre fall back to ASCII borders and glyphs.
+try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch (IOException) { /* no console attached */ }
+
 var cli = CliArgs.Parse(args);
 if (cli.Help || cli.Input is null) return Usage();
 string input = cli.Input;

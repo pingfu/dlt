@@ -205,11 +205,11 @@ internal static class Render
 
         return p.Outcome switch
         {
-            ProbeOutcome.Found => new Markup($"[green bold]{Glyph("✔", "OK")} found[/]"),
-            ProbeOutcome.NotFound => new Markup($"[yellow]{Glyph("–", "--")} not found[/]"),
-            ProbeOutcome.Unreachable => new Markup($"[red]{Glyph("✘", "XX")} unreachable[/]"),
-            ProbeOutcome.Error => new Markup($"[red]{Glyph("!", "!!")} error[/]"),
-            ProbeOutcome.Unsupported => new Markup($"[grey]{Glyph("?", "??")} unsupported[/]"),
+            ProbeOutcome.Found => new Markup($"[green bold]{Glyph("✔", "+")} found[/]"),
+            ProbeOutcome.NotFound => new Markup($"[yellow]{Glyph("–", "-")} not found[/]"),
+            ProbeOutcome.Unreachable => new Markup($"[red]{Glyph("✘", "x")} unreachable[/]"),
+            ProbeOutcome.Error => new Markup($"[red]{Glyph("!", "!")} error[/]"),
+            ProbeOutcome.Unsupported => new Markup($"[grey]{Glyph("?", "?")} unsupported[/]"),
             _ => new Markup("[grey]?[/]"),
         };
     }
