@@ -1,18 +1,25 @@
 using MonoTorrent.Client;
+using MonoTorrent.Dht;
 
 namespace Dlt.Tests;
 
 public class MetadataPhaseTests
 {
     private static MetadataSnapshot Snapshot(
-        bool announced = true, bool ok = true, string? error = null,
-        int trackerPeers = 0, int pex = 0, int failed = 0, ConnectionFailureReason? lastFailure = null,
+        bool hasTracker = true, bool announced = true, bool ok = true, string? error = null,
+        int trackerPeers = 0, int pex = 0, int dhtPeers = 0, DhtState? dht = null, int nodes = 0,
+        int failed = 0, ConnectionFailureReason? lastFailure = null,
         int known = 0, int open = 0, int ext = 0, TimeSpan? retry = null)
-        => new(announced, ok, error, trackerPeers, pex, failed, lastFailure, known, open, ext, retry);
+        => new(hasTracker, announced, ok, error, trackerPeers, pex, dhtPeers, dht, nodes, failed, lastFailure, known, open, ext, retry);
 
     [Fact]
     public void BeforeAnnounce()
         => Assert.Equal("[grey]announcing to tracker[/]", MetadataPhase.Describe(Snapshot(announced: false)));
+
+    [Fact]
+    public void BeforeAnnounceWithDhtBootstrapping()
+        => Assert.Equal("[grey]announcing to tracker[/]  [grey]· dht bootstrapping, 12 nodes[/]",
+            MetadataPhase.Describe(Snapshot(announced: false, dht: DhtState.Initialising, nodes: 12)));
 
     [Fact]
     public void AnnounceFailedShowsTrackerMessageEscaped()
@@ -27,10 +34,25 @@ public class MetadataPhaseTests
         => Assert.Contains("tracker: announce failed", MetadataPhase.Describe(Snapshot(ok: false)));
 
     [Fact]
+    public void AnnounceFailedButDhtDeliveredPeersIsNotAnError()
+    {
+        // The tracker is a lost cause, the DHT is not: the status describes the peers in hand, not the dead tracker.
+        var text = MetadataPhase.Describe(Snapshot(ok: false, error: "gone", dht: DhtState.Ready, nodes: 200, dhtPeers: 6));
+        Assert.Equal("[grey]tracker gave 0 (+6 dht) peers · connecting[/]", text);
+    }
+
+    [Fact]
     public void NoPeersAtAllNamesTheWait()
     {
         var text = MetadataPhase.Describe(Snapshot(retry: TimeSpan.FromMinutes(29.6)));
         Assert.Equal("[yellow]tracker returned no peers[/]  [grey]next announce in 30m[/]", text);
+    }
+
+    [Fact]
+    public void NoPeersFromTrackerMentionsDhtSearch()
+    {
+        var text = MetadataPhase.Describe(Snapshot(retry: TimeSpan.FromSeconds(30), dht: DhtState.Ready, nodes: 150));
+        Assert.Equal("[yellow]tracker returned no peers[/]  [grey]next announce in 30s[/]  [grey]· dht searching, 150 nodes[/]", text);
     }
 
     [Fact]
@@ -45,6 +67,13 @@ public class MetadataPhaseTests
     {
         var text = MetadataPhase.Describe(Snapshot(trackerPeers: 12, pex: 4));
         Assert.Equal("[grey]tracker gave 12 (+4 pex) peers · connecting[/]", text);
+    }
+
+    [Fact]
+    public void PexAndDhtExtrasAreBothListed()
+    {
+        var text = MetadataPhase.Describe(Snapshot(trackerPeers: 12, pex: 4, dhtPeers: 9, dht: DhtState.Ready));
+        Assert.Equal("[grey]tracker gave 12 (+4 pex, +9 dht) peers · connecting[/]", text);
     }
 
     [Fact]
@@ -67,6 +96,35 @@ public class MetadataPhaseTests
         var text = MetadataPhase.Describe(Snapshot(trackerPeers: 5, open: 2, ext: 2));
         Assert.Equal("[grey]tracker gave 5 peers · 2 connected · requesting info dict[/]", text);
     }
+
+    [Fact]
+    public void DhtOnlyWhileBootstrapping()
+        => Assert.Equal("[grey]bootstrapping dht · 3 nodes[/]",
+            MetadataPhase.Describe(Snapshot(hasTracker: false, dht: DhtState.Initialising, nodes: 3)));
+
+    [Fact]
+    public void DhtOnlyReadyButEmptyHanded()
+        => Assert.Equal("[yellow]dht found no peers yet[/]  [grey]180 nodes, still searching[/]",
+            MetadataPhase.Describe(Snapshot(hasTracker: false, dht: DhtState.Ready, nodes: 180)));
+
+    [Fact]
+    public void DhtOnlyWithPeersNeverMentionsATracker()
+    {
+        var text = MetadataPhase.Describe(Snapshot(hasTracker: false, dht: DhtState.Ready, nodes: 180, dhtPeers: 8, pex: 2, open: 3, ext: 3));
+        Assert.Equal("[grey]dht gave 8 (+2 pex) peers · 3 connected · requesting info dict[/]", text);
+    }
+
+    [Fact]
+    public void DhtLineIsEmptyWhenDhtIsOff()
+        => Assert.Equal(string.Empty, MetadataPhase.DescribeDht(Snapshot()));
+
+    [Theory]
+    [InlineData(DhtState.NotReady, 0, 0, "not ready · 0 nodes · 0 peers found")]
+    [InlineData(DhtState.Initialising, 12, 0, "bootstrapping · 12 nodes · 0 peers found")]
+    [InlineData(DhtState.Ready, 142, 1, "ready · 142 nodes · 1 peer found")]
+    [InlineData(DhtState.Ready, 142, 23, "ready · 142 nodes · 23 peers found")]
+    public void DhtLineNamesStateNodesAndPeers(DhtState state, int nodes, int peers, string expected)
+        => Assert.Equal(expected, MetadataPhase.DescribeDht(Snapshot(dht: state, nodes: nodes, dhtPeers: peers)));
 
     [Theory]
     [InlineData(null, "?")]

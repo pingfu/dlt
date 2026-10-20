@@ -9,6 +9,7 @@ public class CliArgsTests
         Assert.Equal("magnet:?xt=x", a.Input);
         Assert.False(a.Select);
         Assert.False(a.Seed);
+        Assert.True(a.Dht);
         Assert.Null(a.OutDir);
         Assert.False(a.Help);
     }
@@ -16,10 +17,18 @@ public class CliArgsTests
     [Fact]
     public void FlagsInAnyOrder()
     {
-        var a = CliArgs.Parse(["--seed", "file.torrent", "--select"]);
+        var a = CliArgs.Parse(["--seed", "file.torrent", "--select-tracker"]);
         Assert.Equal("file.torrent", a.Input);
         Assert.True(a.Select);
         Assert.True(a.Seed);
+        Assert.False(a.Help);
+    }
+
+    [Fact]
+    public void NoDhtSwitchesDhtOff()
+    {
+        var a = CliArgs.Parse(["x.torrent", "--no-dht"]);
+        Assert.False(a.Dht);
         Assert.False(a.Help);
     }
 

@@ -23,24 +23,25 @@ Full torrent clients can be heavy, built to manage a library of active torrents:
 - **Foreground only.** Downloads and goes away. Nothing left running.
 - **One torrent per run.** No queue, no pause. Run again after an interruption and it checks what's already on disk and fetches the rest.
 - **Leaves no trace.** The download is the only thing written. No config, no state, no history.
-- **Tracker driven.** Probes every tracker and picks the strongest. No DHT, no local peer discovery.
+- **Tracker and DHT.** Probes every tracker and picks the strongest, with DHT alongside. `--no-dht` for tracker only. No local peer discovery.
 - **Download only.** No uploads, no open ports, unless you pass `--seed`.
 
 ## Usage
 
 ```shell
-dlt <magnet | file.torrent | https://.../file.torrent> [--out <dir>] [--select] [--seed]
+dlt <magnet | file.torrent | https://.../file.torrent> [--out <dir>] [--select-tracker] [--seed] [--no-dht]
 ```
 
 | Option | Description |
 |---|---|
 | `--out <dir>` | Save into this directory. Created if missing. Default is the current directory. |
-| `--select` | Prompts the user to select which tracker to use, instead of picking the one with the most seeds. |
+| `--select-tracker` | Prompts the user to select which tracker to use, instead of picking the one with the most seeds. |
 | `--seed` | Turn uploads on, accept incoming peers, and keep running as a seed after the download. Stop it with Ctrl+C. |
+| `--no-dht` | Tracker only. The DHT binds one UDP port for its own replies; this removes it. A magnet with no working tracker then fails instead of searching. |
 
 ## Alternatives
 
-If you want a client that runs in the background, seeds for the long haul, finds peers over DHT, pauses and resumes, queues torrents, picks individual files out of a multi-file torrent, or forwards ports, use a full one:
+If you want a client that runs in the background, seeds for the long haul, keeps a warm DHT routing table, pauses and resumes, queues torrents, picks individual files out of a multi-file torrent, or forwards ports, use a full one:
 
 - [qBittorrent](https://www.qbittorrent.org/)
 - [Transmission](https://transmissionbt.com/)

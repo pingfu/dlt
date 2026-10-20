@@ -73,7 +73,7 @@ public class UdpTrackerTests
     }
 
     [Fact]
-    public async Task SilenceIsATimeout()
+    public async Task SilenceIsATimeoutBoundedByTheWholeProbeBudget()
     {
         using var tracker = new FakeUdpTracker((_, _) => []);
         var p = new TrackerProbe(1, tracker.Url);
@@ -82,8 +82,9 @@ public class UdpTrackerTests
         await checker.RunAsync(p, Probes.Hash, CancellationToken.None);
 
         Assert.Equal(ProbeOutcome.Unreachable, p.Outcome);
-        Assert.Equal("timeout", p.Detail);
-        Assert.Equal(2, tracker.Received.Count); // two connect attempts, no scrape
+        Assert.Equal("timed out while connecting", p.Detail);
+        Assert.InRange(tracker.Received.Count, 1, 2);      // the budget expires during the first or second connect attempt; never a scrape
+        Assert.InRange(p.Clock.ElapsedMilliseconds, 100, 1000); // the budget, not resolve + connects + retries stacked
     }
 
     [Fact]
@@ -97,7 +98,7 @@ public class UdpTrackerTests
         await checker.RunAsync(p, Probes.Hash, CancellationToken.None);
 
         Assert.Equal(ProbeOutcome.Unreachable, p.Outcome);
-        Assert.Equal("connected, but scrape timed out", p.Detail);
+        Assert.Equal("timed out while waiting for the scrape response", p.Detail);
     }
 
     [Fact]

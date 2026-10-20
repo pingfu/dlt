@@ -27,9 +27,16 @@ public sealed class TrackerChecker : IDisposable
         };
     }
 
+    /// <summary>
+    /// Probes one tracker. The timeout is a budget for the whole probe, not per step: without that, a tracker that
+    /// drops every packet costs resolve, two connect attempts, a scrape, and the same again over IPv6, and a dead HTTP
+    /// tracker costs a scrape and then an announce. The per-step timeouts inside each protocol still apply within it.
+    /// </summary>
     public async Task RunAsync(TrackerProbe p, byte[] infoHash, CancellationToken ct)
     {
         p.Clock.Start();
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budget.CancelAfter(_timeout);
         try
         {
             if (p.Uri is null)
@@ -41,13 +48,13 @@ public sealed class TrackerChecker : IDisposable
             switch (p.Scheme)
             {
                 case "udp":
-                    await UdpTracker.ProbeAsync(p, infoHash, _timeout, ct);
+                    await UdpTracker.ProbeAsync(p, infoHash, _timeout, budget.Token);
                     break;
                 case "http" or "https":
-                    await HttpTracker.ProbeAsync(_http, p, infoHash, _timeout, ct);
+                    await HttpTracker.ProbeAsync(_http, p, infoHash, _timeout, budget.Token);
                     break;
                 case "ws" or "wss":
-                    await WebSocketTracker.ProbeAsync(p, infoHash, _timeout, ct);
+                    await WebSocketTracker.ProbeAsync(p, infoHash, _timeout, budget.Token);
                     break;
                 default:
                     p.Finish(ProbeOutcome.Unsupported, $"scheme '{p.Scheme}' is not a tracker protocol this tool speaks");
@@ -60,6 +67,7 @@ public sealed class TrackerChecker : IDisposable
         }
         catch (OperationCanceledException)
         {
+            // The budget ran out. The stage says how far it got.
             p.Finish(ProbeOutcome.Unreachable, $"timed out while {StageVerb(p.Stage)}");
         }
         catch (TrackerResponseException ex)

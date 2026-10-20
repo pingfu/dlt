@@ -2,33 +2,40 @@ using System.Diagnostics;
 using System.Net;
 using MonoTorrent;
 using MonoTorrent.Client;
+using MonoTorrent.Dht;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
 namespace Dlt;
 
-/// <summary>Downloads the torrent behind a magnet with MonoTorrent, discovering peers only through the one chosen tracker.</summary>
+/// <summary>Downloads the torrent behind a magnet with MonoTorrent, discovering peers through the one chosen tracker and, unless switched off, the DHT.</summary>
 internal static class Download
 {
     /// <summary>Where MonoTorrent insists on having a scratch directory. Nothing is ever written into it; see <see cref="RemoveCacheIfEmpty"/>.</summary>
     internal static readonly string DefaultCacheDirectory = Path.Combine(Path.GetTempPath(), "dlt");
 
+    /// <param name="trackerUrl">The tracker to announce to, or null for a DHT-only download (no tracker knew the torrent, or none was listed).</param>
     /// <param name="seed">Lift the upload restriction, accept incoming peers, and keep running as a seed once complete.</param>
-    public static async Task<bool> RunAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, bool seed, CancellationToken ct)
+    /// <param name="dht">Find peers through the DHT as well. Bootstraps from scratch every run: nothing is cached.</param>
+    public static async Task<bool> RunAsync(MagnetUri magnet, string? trackerUrl, string saveDirectory, bool seed, bool dht, CancellationToken ct)
     {
-        try { return await RunCoreAsync(magnet, trackerUrl, saveDirectory, seed, ct); }
+        try { return await RunCoreAsync(magnet, trackerUrl, saveDirectory, seed, dht, ct); }
         finally { RemoveCacheIfEmpty(DefaultCacheDirectory); }
     }
 
-    private static async Task<bool> RunCoreAsync(MagnetUri magnet, string trackerUrl, string saveDirectory, bool seed, CancellationToken ct)
+    private static async Task<bool> RunCoreAsync(MagnetUri magnet, string? trackerUrl, string saveDirectory, bool seed, bool dht, CancellationToken ct)
     {
-        var link = new MagnetLink(ToInfoHashes(magnet), magnet.DisplayName, [trackerUrl], magnet.WebSeeds, magnet.ExactLength);
+        IList<string> trackers = trackerUrl is null ? [] : [trackerUrl];
+        var link = new MagnetLink(ToInfoHashes(magnet), magnet.DisplayName, trackers, magnet.WebSeeds, magnet.ExactLength);
 
-        using var engine = new ClientEngine(BuildEngineSettings(seed));
-        var manager = await engine.AddAsync(link, saveDirectory, BuildTorrentSettings(seed));
-        var phase = new MetadataPhase(manager);
+        var (engine, dhtEngine) = BuildEngine(seed, dht);
+        using var engineLifetime = engine;
+        var manager = await engine.AddAsync(link, saveDirectory, BuildTorrentSettings(seed, dht));
+        var phase = new MetadataPhase(manager, hasTracker: trackerUrl is not null, dht);
+        var routers = dhtEngine is null ? null : await SeedDhtAsync(dhtEngine, ct);
 
-        AnsiConsole.MarkupLine($"  [grey]tracker[/]  {Markup.Escape(trackerUrl)}");
+        AnsiConsole.MarkupLine($"  [grey]tracker[/]  {(trackerUrl is null ? "[grey italic]none[/]" : Markup.Escape(trackerUrl))}");
+        AnsiConsole.MarkupLine($"  [grey]dht[/]      {(routers is null ? "[grey]off[/]" : $"on: {routers.Describe()}")}");
         AnsiConsole.MarkupLine($"  [grey]save to[/]  {Markup.Escape(Path.GetFullPath(saveDirectory))}");
         if (seed) AnsiConsole.MarkupLine("  [grey]mode[/]     seed: uploads unlimited, incoming peers accepted, stays running after completion");
         AnsiConsole.WriteLine();
@@ -37,7 +44,10 @@ internal static class Download
         try
         {
             await manager.StartAsync();
-            await ShowProgressAsync(manager, phase, ct);
+            using var nudgeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var nudge = dhtEngine is null ? Task.CompletedTask : NudgeDhtAsync(dhtEngine, manager, nudgeCts.Token);
+            try { await ShowProgressAsync(manager, phase, ct); }
+            finally { nudgeCts.Cancel(); await nudge; }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -95,12 +105,56 @@ internal static class Download
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* best effort */ }
     }
 
+    /// <summary>
+    /// The client engine and, when DHT is on, the DHT engine it was built around. The DHT engine is created here rather
+    /// than left to MonoTorrent so that <see cref="SeedDhtAsync"/> can hand it bootstrap nodes before anything starts.
+    /// </summary>
+    internal static (ClientEngine Engine, DhtEngine? Dht) BuildEngine(bool seed, bool dht, string? cacheDirectory = null)
+    {
+        var settings = BuildEngineSettings(seed, dht, cacheDirectory);
+        if (!dht) return (new ClientEngine(settings), null);
+        var dhtEngine = new DhtEngine();
+        return (new ClientEngine(settings, Factories.Default.WithDhtCreator(() => dhtEngine)), dhtEngine);
+    }
+
+    /// <summary>Queues the public routers as the DHT engine's first contacts. Must run before the torrent starts: nodes added later are pinged, not bootstrapped from.</summary>
+    internal static async Task<DhtBootstrap.Seed> SeedDhtAsync(DhtEngine dhtEngine, CancellationToken ct)
+    {
+        DhtBootstrap.TrySetQueryTimeout(dhtEngine, DhtBootstrap.QueryTimeout);
+        var seed = await DhtBootstrap.ResolveAsync(TimeSpan.FromSeconds(3), ct);
+        if (seed.Nodes.Count > 0) dhtEngine.Add(seed.Nodes);
+        return seed;
+    }
+
+    /// <summary>
+    /// MonoTorrent only asks the DHT for peers once the engine reports Ready, and on a cold start Ready can take a minute
+    /// or more: the bootstrap walk waits for every node it queried, and a dead one costs four 15-second timeouts. The
+    /// routing table is usable long before that, so while the engine is still initialising and the torrent has no
+    /// metadata, this asks for peers directly every few seconds. Peers found this way reach the manager the usual way.
+    /// </summary>
+    internal static async Task NudgeDhtAsync(DhtEngine dht, TorrentManager manager, CancellationToken ct)
+    {
+        try
+        {
+            while (!manager.HasMetadata && dht.State != DhtState.Ready)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(4), ct);
+                if (manager.HasMetadata || dht.State == DhtState.Ready || dht.NodeCount == 0) continue;
+                if (manager.InfoHashes.V1 is { } v1) dht.GetPeers(v1);
+                if (manager.InfoHashes.V2 is { } v2) dht.GetPeers(v2.Truncate());
+            }
+        }
+        catch (OperationCanceledException) { /* download finished or was interrupted */ }
+    }
+
     /// <summary>Engine settings. Every auto-save option is off, so the cache directory stays empty.</summary>
-    internal static EngineSettings BuildEngineSettings(bool seed, string? cacheDirectory = null)
+    internal static EngineSettings BuildEngineSettings(bool seed, bool dht, string? cacheDirectory = null)
         => new EngineSettingsBuilder
         {
             CacheDirectory = cacheDirectory ?? DefaultCacheDirectory,
-            DhtEndPoint = null,                       // no DHT: peers come from the chosen tracker only
+            // DHT binds one UDP socket on an OS-assigned port. It only needs replies to its own queries, so no port
+            // mapping is attempted for it. Null switches the DHT engine off entirely.
+            DhtEndPoint = dht ? new IPEndPoint(IPAddress.Any, 0) : null,
             AllowLocalPeerDiscovery = false,
             // Seeding needs peers to reach us: listen on an OS-assigned port and try to map it. Otherwise outgoing only.
             AllowPortForwarding = seed,
@@ -112,11 +166,11 @@ internal static class Download
             AutoSaveLoadDhtCache = false,
         }.ToSettings();
 
-    internal static TorrentSettings BuildTorrentSettings(bool seed)
+    internal static TorrentSettings BuildTorrentSettings(bool seed, bool dht)
     {
         var builder = new TorrentSettingsBuilder
         {
-            AllowDht = false,
+            AllowDht = dht,
             AllowPeerExchange = true,
             CreateContainingDirectory = true,
         };
@@ -184,8 +238,17 @@ internal static class Download
     {
         var lastPct = -1;
         var lastPhase = string.Empty;
+        (DhtState?, int) lastDht = default;
         while (!IsFinished(manager))
         {
+            // The DHT line repeats on a state change or a new batch of peers, not on every node-count tick.
+            var snapshot = phase.Snapshot();
+            if (snapshot.Dht is not null && (snapshot.Dht, snapshot.DhtPeers) != lastDht)
+            {
+                lastDht = (snapshot.Dht, snapshot.DhtPeers);
+                AnsiConsole.MarkupLine($"  [grey]dht:[/] {MetadataPhase.DescribeDht(snapshot)}");
+            }
+
             if (!manager.HasMetadata)
             {
                 var text = phase.Describe();
@@ -274,10 +337,14 @@ internal static class Download
         task.Description = $"{state}  [grey]{manager.OpenConnections} peer(s), {manager.Peers.Seeds} seed(s)[/]";
     }
 
-    /// <summary>Trailing progress column: what the engine is doing while it has no metadata yet, blank afterwards.</summary>
+    /// <summary>Trailing progress column: what the engine is doing while it has no metadata yet, then the live DHT state (blank with DHT off).</summary>
     private sealed class PhaseColumn(MetadataPhase phase) : ProgressColumn
     {
         public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
-            => task.IsIndeterminate ? new Markup(phase.Describe()) : Text.Empty;
+        {
+            if (task.IsIndeterminate) return new Markup(phase.Describe());
+            var dht = MetadataPhase.DescribeDht(phase.Snapshot());
+            return dht.Length == 0 ? Text.Empty : new Markup($"[grey]dht {dht}[/]");
+        }
     }
 }

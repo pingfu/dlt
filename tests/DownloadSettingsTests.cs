@@ -8,10 +8,11 @@ public class DownloadSettingsTests
     [Fact]
     public void DefaultIsDownloadOnly()
     {
-        var engine = Download.BuildEngineSettings(seed: false);
-        var torrent = Download.BuildTorrentSettings(seed: false);
+        var engine = Download.BuildEngineSettings(seed: false, dht: true);
+        var torrent = Download.BuildTorrentSettings(seed: false, dht: true);
 
-        Assert.Null(engine.DhtEndPoint);
+        Assert.NotNull(engine.DhtEndPoint);
+        Assert.Equal(0, engine.DhtEndPoint!.Port);   // OS-assigned UDP port
         Assert.False(engine.AllowLocalPeerDiscovery);
         Assert.False(engine.AllowPortForwarding);
         Assert.Empty(engine.ListenEndPoints);
@@ -19,16 +20,27 @@ public class DownloadSettingsTests
         Assert.False(engine.AutoSaveLoadMagnetLinkMetadata);
         Assert.False(engine.AutoSaveLoadDhtCache);
 
-        Assert.False(torrent.AllowDht);
+        Assert.True(torrent.AllowDht);
         Assert.Equal(0, torrent.UploadSlots);
         Assert.Equal(1, torrent.MaximumUploadRate);
     }
 
     [Fact]
+    public void NoDhtLeavesTheEngineTrackerOnly()
+    {
+        var engine = Download.BuildEngineSettings(seed: false, dht: false);
+        var torrent = Download.BuildTorrentSettings(seed: false, dht: false);
+
+        Assert.Null(engine.DhtEndPoint);
+        Assert.False(torrent.AllowDht);
+        Assert.False(engine.AutoSaveLoadDhtCache);
+    }
+
+    [Fact]
     public void SeedModeOpensTheDoor()
     {
-        var engine = Download.BuildEngineSettings(seed: true);
-        var torrent = Download.BuildTorrentSettings(seed: true);
+        var engine = Download.BuildEngineSettings(seed: true, dht: true);
+        var torrent = Download.BuildTorrentSettings(seed: true, dht: true);
 
         Assert.True(engine.AllowPortForwarding);
         Assert.Equal(2, engine.ListenEndPoints.Count);
@@ -36,7 +48,7 @@ public class DownloadSettingsTests
 
         Assert.True(torrent.UploadSlots > 0);
         Assert.Equal(0, torrent.MaximumUploadRate); // 0 is MonoTorrent's "unlimited"
-        Assert.Null(engine.DhtEndPoint);            // still tracker-only
+        Assert.NotNull(engine.DhtEndPoint);
     }
 
     [Fact]
@@ -50,10 +62,12 @@ public class DownloadSettingsTests
         var save = Path.Combine(root, "save");
         try
         {
-            using (var engine = new ClientEngine(Download.BuildEngineSettings(seed: false, cache)))
+            // DHT on, as it is by default: the DHT engine must not leave a node cache behind either.
+            var (engine, _) = Download.BuildEngine(seed: false, dht: true, cache);
+            using (engine)
             {
                 var link = new MagnetLink(InfoHashes.FromV1(new InfoHash(Probes.Hash)), "unit", ["http://127.0.0.1:1/announce"], null, 1234);
-                var manager = await engine.AddAsync(link, save, Download.BuildTorrentSettings(seed: false));
+                var manager = await engine.AddAsync(link, save, Download.BuildTorrentSettings(seed: false, dht: true));
                 await manager.StartAsync();
                 await Task.Delay(500);
                 await manager.StopAsync(TimeSpan.FromSeconds(2));
