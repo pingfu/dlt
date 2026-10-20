@@ -61,7 +61,7 @@ internal static class Render
             .Padding(1, 0));
 
         foreach (var warning in m.Warnings)
-            AnsiConsole.MarkupLine($"  [yellow]{Glyph("⚠", "!")}[/] [yellow]{Markup.Escape(warning)}[/]");
+            AnsiConsole.MarkupLine($"  [yellow]warning:[/] [yellow]{Markup.Escape(warning)}[/]");
         AnsiConsole.WriteLine();
     }
 
@@ -180,7 +180,7 @@ internal static class Render
         if (answer is "n" or "q" or "0") return null;
         var chosen = answer.Length == 0 ? suggested : probes[int.Parse(answer) - 1];
         if (chosen.Outcome != ProbeOutcome.Found)
-            AnsiConsole.MarkupLine($"  [yellow]{Glyph("⚠", "!")} tracker #{chosen.Index} did not report this torrent; trying it anyway[/]");
+            AnsiConsole.MarkupLine($"  [yellow]tracker #{chosen.Index} did not report this torrent; trying it anyway[/]");
         AnsiConsole.WriteLine();
         return chosen;
     }
@@ -205,11 +205,11 @@ internal static class Render
 
         return p.Outcome switch
         {
-            ProbeOutcome.Found => new Markup($"[green bold]{Glyph("✔", "+")} found[/]"),
-            ProbeOutcome.NotFound => new Markup($"[yellow]{Glyph("–", "-")} not found[/]"),
-            ProbeOutcome.Unreachable => new Markup($"[red]{Glyph("✘", "x")} unreachable[/]"),
-            ProbeOutcome.Error => new Markup($"[red]{Glyph("!", "!")} error[/]"),
-            ProbeOutcome.Unsupported => new Markup($"[grey]{Glyph("?", "?")} unsupported[/]"),
+            ProbeOutcome.Found => new Markup("[green bold]found[/]"),
+            ProbeOutcome.NotFound => new Markup("[yellow]not found[/]"),
+            ProbeOutcome.Unreachable => new Markup("[red]unreachable[/]"),
+            ProbeOutcome.Error => new Markup("[red]error[/]"),
+            ProbeOutcome.Unsupported => new Markup("[grey]unsupported[/]"),
             _ => new Markup("[grey]?[/]"),
         };
     }
@@ -223,8 +223,8 @@ internal static class Render
         }
         else
         {
-            if (p.Method is not null && p.Outcome is ProbeOutcome.Found or ProbeOutcome.NotFound) bits.Add($"[grey]{Markup.Escape(p.Method)}[/]");
             if (p.Endpoint is not null && p.Scheme == "udp") bits.Add($"[grey]{Markup.Escape(p.Endpoint)}[/]");
+            if (p.Method is not null && p.Outcome is ProbeOutcome.Found or ProbeOutcome.NotFound) bits.Add($"[grey]{Markup.Escape(p.Method)}[/]");
             if (p.Detail is not null)
             {
                 var colour = p.Outcome switch
@@ -237,13 +237,12 @@ internal static class Render
                 bits.Add($"[{colour}]{Markup.Escape(p.Detail)}[/]");
             }
         }
-        return new Markup(string.Join("  ", bits));
+        return new Markup(string.Join(" / ", bits));
     }
 
     private static IRenderable Count(long? value, string colour)
         => value is null ? Text.Empty : new Markup(value > 0 ? $"[{colour}]{value:N0}[/]" : "[grey]0[/]");
 
-    private static string Glyph(string unicode, string ascii) => Unicode ? unicode : ascii;
 
     public static string HumanDuration(TimeSpan t) => t.TotalSeconds switch
     {
