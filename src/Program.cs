@@ -11,15 +11,28 @@ static int Usage()
     AnsiConsole.MarkupLine("  [cyan]--select-tracker[/]  ask which tracker to use instead of picking automatically");
     AnsiConsole.MarkupLine("  [cyan]--seed[/]            allow uploads, accept incoming peers, and keep seeding after the download completes");
     AnsiConsole.MarkupLine("  [cyan]--no-dht[/]          tracker only: do not bind a UDP port or look for peers in the DHT");
-    AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine("[grey]quote a magnet URI so the shell does not split it on '&'[/]");
+    AnsiConsole.MarkupLine("  [cyan]--version[/]         print the version and exit");
     return 2;
+}
+
+/// <summary>The csproj Version. The SDK appends "+<commit>" to the informational version; that part is dropped.</summary>
+static string Version()
+{
+    var informational = typeof(CliArgs).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+    var version = informational?.Split('+')[0];
+    return string.IsNullOrEmpty(version) ? typeof(CliArgs).Assembly.GetName().Version?.ToString(3) ?? "unknown" : version;
 }
 
 // Windows consoles default to a legacy code page, which makes Spectre fall back to ASCII borders and glyphs.
 try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch (IOException) { /* no console attached */ }
 
 var cli = CliArgs.Parse(args);
+if (cli.Version)
+{
+    Console.WriteLine($"dlt {Version()}");
+    return 0;
+}
 if (cli.Help || cli.Input is null) return Usage();
 string input = cli.Input;
 bool select = cli.Select, seed = cli.Seed, dht = cli.Dht;

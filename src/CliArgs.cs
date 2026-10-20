@@ -1,10 +1,15 @@
 namespace Dlt;
 
-/// <summary>Parsed command line: one input (magnet, path or URL) plus flags. Help is true for -h, no input, or anything unrecognised.</summary>
-internal sealed record CliArgs(string? Input, bool Select, bool Seed, bool Dht, string? OutDir, bool Help)
+/// <summary>
+/// Parsed command line: one input (magnet, path or URL) plus flags. Help is true for -h, no input, or anything
+/// unrecognised. Version is true for --version, which wins over everything else on the line.
+/// </summary>
+internal sealed record CliArgs(string? Input, bool Select, bool Seed, bool Dht, string? OutDir, bool Help, bool Version = false)
 {
     public static CliArgs Parse(string[] args)
     {
+        if (args.Contains("--version", StringComparer.Ordinal)) return new(null, false, false, true, null, Help: false, Version: true);
+
         string? input = null, outDir = null;
         bool select = false, seed = false, dht = true;
         for (var i = 0; i < args.Length; i++)

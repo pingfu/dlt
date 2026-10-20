@@ -24,6 +24,21 @@ public class CliArgsTests
         Assert.False(a.Help);
     }
 
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("x.torrent --version")]
+    [InlineData("--version --bogus")]
+    public void VersionWinsOverEverythingElse(string commandLine)
+    {
+        var a = CliArgs.Parse(commandLine.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        Assert.True(a.Version);
+        Assert.False(a.Help);
+    }
+
+    [Fact]
+    public void VersionIsOffByDefault()
+        => Assert.False(CliArgs.Parse(["x.torrent"]).Version);
+
     [Fact]
     public void NoDhtSwitchesDhtOff()
     {
