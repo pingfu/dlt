@@ -37,8 +37,8 @@ dlt <magnet | file.torrent | https://.../file.torrent> [--out <dir>] [--select-t
 | `--out <dir>` | Save into this directory. Created if missing. Default is the current directory. |
 | `--select-tracker` | Prompts the user to select which tracker to use, instead of picking the one with the most seeds. |
 | `--seed` | Turn uploads on, accept incoming peers, and keep running as a seed after the download. Stop it with Ctrl+C. |
-| `--version` | Print the version and exit. |
 | `--no-dht` | Tracker only. The DHT binds one UDP port for its own replies; this removes it. A magnet with no working tracker then fails instead of searching. |
+| `--version` | Print the version and exit. |
 
 ## Alternatives
 
