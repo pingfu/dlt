@@ -28,7 +28,7 @@ Full torrent clients can be heavy, built to manage a library of active torrents:
 
 ## Usage
 
-```
+```shell
 dlt <magnet | file.torrent | https://.../file.torrent> [--out <dir>] [--select] [--seed]
 ```
 
