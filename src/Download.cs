@@ -67,10 +67,10 @@ internal static class Download
             + $"[grey]({Render.HumanSize(size)} in {Render.HumanDuration(clock.Elapsed)}, {Render.HumanSize((long)(size / seconds))}/s)[/]");
         foreach (var file in manager.Files)
             AnsiConsole.MarkupLine($"  [grey]{Markup.Escape(file.FullPath)}[/]");
+        AnsiConsole.WriteLine();
 
         if (seed)
         {
-            AnsiConsole.WriteLine();
             await SeedForeverAsync(manager, ct);   // returns only on error; Ctrl+C terminates the process
             await manager.StopAsync(TimeSpan.FromSeconds(5));
             return false;
