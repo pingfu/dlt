@@ -26,6 +26,29 @@ Full torrent clients can be heavy, built to manage a library of active torrents:
 - **Tracker and DHT.** Probes every tracker and picks the strongest, with DHT alongside. `--no-dht` for tracker only. No local peer discovery.
 - **Download only.** No uploads, no open ports, unless you pass `--seed`.
 
+## Install
+
+Download the binary for your platform from the [latest release](https://github.com/pingfu/dlt/releases/latest).
+
+### macOS
+
+Install for all users into `/usr/local/bin`, which is on everyone's `PATH`. Use `dlt-osx-arm64` on Apple Silicon, or `dlt-osx-x64` on Intel.
+
+```shell
+sudo curl -L -o /usr/local/bin/dlt https://github.com/pingfu/dlt/releases/latest/download/dlt-osx-arm64
+sudo chmod +x /usr/local/bin/dlt
+```
+
+If you downloaded it with a browser instead, macOS quarantines the file and Gatekeeper will refuse to run it. Move it into place and clear the flag:
+
+```shell
+sudo mv ~/Downloads/dlt-osx-arm64 /usr/local/bin/dlt
+sudo chmod +x /usr/local/bin/dlt
+sudo xattr -d com.apple.quarantine /usr/local/bin/dlt
+```
+
+Open a new terminal, or run `hash -r`, then check it with `dlt --version`.
+
 ## Usage
 
 ```shell
